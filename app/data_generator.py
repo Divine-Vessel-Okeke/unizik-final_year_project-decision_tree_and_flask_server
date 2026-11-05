@@ -1,4 +1,4 @@
-# /app/data_generator.py
+# app/data_generator.py
 
 import os
 import sys
@@ -8,12 +8,12 @@ import pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.config import Config
 
-def generate_unizik_dataset() -> pd.DataFrame:
+
+def generate_synthetic_dataset() -> pd.DataFrame:
     np.random.seed(42)
-    print("Initializing synthetic data generation with deep multi-variable overlap...")
-    
-    # 1. Class 0A: Standard Individual Students (3,000 rows)
-    # Fast autofill students can finish in 8s; 8% use VPNs for privacy; up to 3 network declines allowed
+    print("Initializing synthetic data generation.")
+
+    # 1. Class 0 sample group A (3,000 rows)
     n_student = 3000
     student_data = {
         'device_student_count_24h': np.random.choice([1, 2, 3, 4], size=n_student, p=[0.75, 0.15, 0.07, 0.03]),
@@ -24,12 +24,10 @@ def generate_unizik_dataset() -> pd.DataFrame:
         'is_off_peak_hour': np.random.choice([0, 1], size=n_student, p=[0.94, 0.06]),
         'target_label': np.zeros(n_student, dtype=int)
     }
-    # Allow dwell times down to 8.0 seconds to overlap with slow fraudsters
     student_data['page_dwell_time_seconds'] = np.clip(student_data['page_dwell_time_seconds'], 8.0, 180.0)
     df_student = pd.DataFrame(student_data)
-    
-    # 2. Class 0B: Legitimate Campus Cybercafe Operators (650 rows)
-    # High velocity (10 to 120); rapid experienced typing (down to 10s); occasional network declines (up to 4 fails)
+
+    # 2. Class 0 sample group B (650 rows)
     n_cafe = 650
     cafe_data = {
         'device_student_count_24h': np.random.randint(low=10, high=120, size=n_cafe),
@@ -42,8 +40,7 @@ def generate_unizik_dataset() -> pd.DataFrame:
     }
     df_cafe = pd.DataFrame(cafe_data)
 
-    # 3. Class 1: Fraudulent Syndicates / Stolen Card Testers (1,500 rows)
-    # Velocity spans 2 to 120; dwell time spans 2s to 35s (overlapping legit!); 35% use local SIMs; fails span 0 to 7
+    # 3. Class 1 sample group (1,500 rows)
     n_fraud = 1500
     fraud_data = {
         'device_student_count_24h': np.random.randint(low=2, high=120, size=n_fraud),
@@ -55,29 +52,28 @@ def generate_unizik_dataset() -> pd.DataFrame:
         'target_label': np.ones(n_fraud, dtype=int)
     }
     df_fraud = pd.DataFrame(fraud_data)
-    
-    # 4. Concatenate, shuffle random row order, and reset index
+
+    # 4. Concatenate, shuffle, reset index
     df_full = pd.concat([df_student, df_cafe, df_fraud], ignore_index=True)
     df_shuffled = df_full.sample(frac=1.0, random_state=42).reset_index(drop=True)
-    
+
     return df_shuffled
 
+
 def run_pipeline():
-    df = generate_unizik_dataset()
+    df = generate_synthetic_dataset()
     os.makedirs(Config.DATA_DIR, exist_ok=True)
-    export_path = os.path.join(Config.DATA_DIR, 'unizik_transactions.csv')
-    df.to_csv(export_path, index=False)
-    
+    df.to_csv(Config.DATA_FILE_PATH, index=False)
+
     print("\n" + "="*60)
-    print("UNIZIK MATRIX GENERATED WITH DEEP MULTI-VARIABLE OVERLAP")
+    print("SYNTHETIC DATASET GENERATED")
     print("="*60)
-    print(f"Total Records    : {len(df):,}")
-    print(f"Legitimate (0)   : {len(df[df['target_label'] == 0]):,} rows ({len(df[df['target_label'] == 0])/len(df)*100:.1f}%)")
-    print(f"Fraudulent (1)   : {len(df[df['target_label'] == 1]):,} rows ({len(df[df['target_label'] == 1])/len(df)*100:.1f}%)")
+    print(f"Total rows       : {len(df):,}")
+    print(f"Class 0 rows     : {len(df[df['target_label'] == 0]):,} ({len(df[df['target_label'] == 0])/len(df)*100:.1f}%)")
+    print(f"Class 1 rows     : {len(df[df['target_label'] == 1]):,} ({len(df[df['target_label'] == 1])/len(df)*100:.1f}%)")
+    print(f"Output file      : {Config.DATA_FILE_PATH}")
     print("="*60)
-    print("\nFeature Class Averages (Validation Check):")
-    print(df.groupby('target_label').mean().round(2))
-    print("="*60 + "\n")
+
 
 if __name__ == '__main__':
     run_pipeline()

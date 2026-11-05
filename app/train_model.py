@@ -23,14 +23,15 @@ def train_and_evaluate_model():
   print("INITIALIZING FRAUD DECISION TREE TRAINING")
   print("="*60)
 
-  # 1. Load the synthetic transaction matrix
-  data_path = os.path.join(Config.DATA_DIR, 'unizik_transactions.csv')
+    # 1. Load the synthetic feature dataset
+  data_path = Config.DATA_FILE_PATH
   if not os.path.exists(data_path):
     print(f"[FATAL ERROR] Dataset not found at: {data_path}")
+    print("Please execute 'python app/data_generator.py' before running this script.")
     sys.exit(1)
 
   df = pd.read_csv(data_path)
-  print(f"[INFO] Successfully loaded {len(df):,} records.")
+  print(f"[INFO] Loaded {len(df):,} rows.")
 
   # 2. Extract feature matrix (X) and target vector (y)
   feature_columns = [
