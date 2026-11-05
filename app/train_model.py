@@ -1,4 +1,4 @@
-# unizik-ml-fraud-backend/app/train_model.py
+# app/train_model.py
 import os
 import sys
 import joblib
@@ -15,26 +15,24 @@ from sklearn.metrics import (
   confusion_matrix
 )
 
-# Ensure the root project directory is in the Python path when executed directly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.config import Config
 
 def train_and_evaluate_model():
   print("="*60)
-  print("INITIALIZING UNIZIK FRAUD DECISION TREE TRAINING PIPELINE")
+  print("INITIALIZING FRAUD DECISION TREE TRAINING")
   print("="*60)
 
   # 1. Load the synthetic transaction matrix
   data_path = os.path.join(Config.DATA_DIR, 'unizik_transactions.csv')
   if not os.path.exists(data_path):
     print(f"[FATAL ERROR] Dataset not found at: {data_path}")
-    print("Please execute 'python app/data_generator.py' before running this script.")
     sys.exit(1)
 
   df = pd.read_csv(data_path)
-  print(f"[INFO] Successfully loaded {len(df):,} transaction records.")
+  print(f"[INFO] Successfully loaded {len(df):,} records.")
 
-  # 2. Separate independent feature matrix (X) and target label vector (y)
+  # 2. Extract feature matrix (X) and target vector (y)
   feature_columns = [
     'device_student_count_24h',
     'page_dwell_time_seconds',
@@ -56,19 +54,19 @@ def train_and_evaluate_model():
   )
   print(f"[INFO] Train-Test Split Complete -> Training Set: {len(X_train):,} | Testing Set: {len(X_test):,}")
 
-  # 4. Initialize Decision Tree Classifier with defensive anti-overfitting hyperparameters
+  # 4. Initialize Decision Tree Classifier with depth and sample-size limits
   model = DecisionTreeClassifier(
     criterion='gini',     # Use Gini Impurity to calculate optimal node splits
     max_depth=5,       # Cap tree depth to prevent overfitting to statistical noise
     min_samples_split=10,   # Require at least 10 samples to consider splitting a node
     min_samples_leaf=5,    # Require at least 5 samples to form a terminal classification leaf
-    random_state=42      # Ensure reproducibility for thesis defense
+    random_state=42      # Fixed seed for reproducible results
   )
 
   # 5. Fit the model to the training dataset
-  print("[INFO] Training Decision Tree algorithm on behavioral feature matrix...")
+  print("[INFO] Training DecisionTreeClassifier on the 6 extracted features...")
   model.fit(X_train, y_train)
-  print("[SUCCESS] Model convergence achieved.")
+  print("[SUCCESS] Training complete.")
 
   # 6. Execute predictions against the unseen testing dataset
   y_pred = model.predict(X_test)
@@ -90,8 +88,8 @@ def train_and_evaluate_model():
   print("="*60)
 
   print("\nCONFUSION MATRIX:")
-  print(f"True Negatives (Legit Cleared)  : {conf_matrix[0][0]:,} | False Positives (Innocent Blocked): {conf_matrix[0][1]:,}")
-  print(f"False Negatives (Fraud Missed)  : {conf_matrix[1][0]:,}  | True Positives (Fraud Blocked)  : {conf_matrix[1][1]:,}")
+  print(f"True Negatives (Legit predicted Legit)  : {conf_matrix[0][0]:,} | False Positives (Legit predicted Fraud): {conf_matrix[0][1]:,}")
+  print(f"False Negatives (Fraud predicted Legit) : {conf_matrix[1][0]:,}  | True Positives (Fraud predicted Fraud) : {conf_matrix[1][1]:,}")
 
   print("\nDETAILED CLASSIFICATION REPORT:")
   print(classification_report(y_test, y_pred, target_names=['Legitimate (0)', 'Fraudulent (1)']))
@@ -113,7 +111,7 @@ def train_and_evaluate_model():
   os.makedirs(Config.MODELS_DIR, exist_ok=True)
   joblib.dump(model, Config.MODEL_PATH, compress=3)
   print(f"\n[SUCCESS] Trained Decision Tree binary exported to: {Config.MODEL_PATH}")
-  print("The Flask API engine is now ready for live deployment.\n")
+  print("Trained model saved.\n")
 
 if __name__ == '__main__':
   train_and_evaluate_model()

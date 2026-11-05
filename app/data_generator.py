@@ -1,4 +1,4 @@
-# unizik-ml-fraud-backend/app/data_generator.py
+# /app/data_generator.py
 
 import os
 import sys

@@ -1,4 +1,4 @@
-# unizik-ml-fraud-backend/app/main.py
+# /app/main.py
 
 import os
 import sys

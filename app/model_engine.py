@@ -1,11 +1,11 @@
-# unizik-ml-fraud-backend/app/model_engine.py
+# app/model_engine.py
 
 import os
 import math
 import joblib
-import numpy as np
 import pandas as pd
 from app.config import Config
+
 
 class FraudDetectionEngine:
   def __init__(self):
@@ -21,29 +21,26 @@ class FraudDetectionEngine:
     self.load_model()
 
   def load_model(self) -> bool:
-    """Loads the serialized decision tree binary from disk into RAM."""
+    """Loads the trained model from Config.MODEL_PATH."""
     if os.path.exists(Config.MODEL_PATH):
       try:
         self.model = joblib.load(Config.MODEL_PATH)
         return True
       except Exception as e:
-        print(f"[FATAL ERROR] Failed to load model binary: {e}")
+        print(f"Failed to load model binary: {e}")
         return False
     return False
 
   def _safe_float(self, value, default: float, min_val: float = None, max_val: float = None) -> float:
-    """
-    Sanitizes and casts incoming JSON variables.
-    Prevents HTTP 500 crashes from nulls, strings, NaNs, and clamps Out-of-Distribution (OOD) exploits.
-    """
+    """Casts to float; returns default for invalid values; clamps to optional bounds."""
     if value is None or value == "":
       return default
     try:
       val = float(value)
-      # Catch Python NaN or Infinity strings
+      # Reject NaN or Infinity
       if math.isnan(val) or math.isinf(val):
         return default
-      # Clamp boundaries to prevent Decision Tree OOD blindspot exploits (like dwell=9999s)
+      # Clamp to optional bounds if provided
       if min_val is not None and val < min_val:
         val = min_val
       if max_val is not None and val > max_val:
@@ -53,74 +50,96 @@ class FraudDetectionEngine:
       return default
 
   def _safe_int(self, value, default: int, min_val: int = None, max_val: int = None) -> int:
-    """Sanitizes and casts integer variables safely."""
+    """Casts to int via _safe_float with optional bounds."""
     val = self._safe_float(value, float(default), float(min_val) if min_val is not None else None, float(max_val) if max_val is not None else None)
     return int(val)
 
   def extract_features(self, payload: dict) -> list:
-    """
-    Extracts feature vectors with defensive type checking and OOD boundary clipping.
-    """
-    # Clamp velocity between 0 and 150 accounts
-    device_count = self._safe_int(payload.get('device_student_count_24h'), default=1, min_val=0, max_val=150)
+    """Extracts the 6 feature values"""
+    device_count = self._safe_int(payload.get('device_student_count_24h'), default=0, min_val=0)
 
-    # Clamp dwell time between 0.1s and 180.0s to prevent artificial sleep bypass attacks
-    dwell_time = self._safe_float(payload.get('page_dwell_time_seconds'), default=65.0, min_val=0.1, max_val=180.0)
+    dwell_time = self._safe_float(payload.get('page_dwell_time_seconds'), default=0, min_val=0)
 
-    # Binary flags must be strictly 0 or 1
+    # Binary flags must be 0 or 1
     high_risk_asn = 1 if str(payload.get('is_high_risk_asn', 0)).lower() in ['1', 'true', 'yes'] else 0
 
-    # Clamp failed attempts between 0 and 20
-    failed_attempts = self._safe_int(payload.get('failed_attempts_1h'), default=0, min_val=0, max_val=20)
+    failed_attempts = self._safe_int(payload.get('failed_attempts_1h'), default=0, min_val=0)
 
     hardware_mismatch = 1 if str(payload.get('session_hardware_mismatch', 0)).lower() in ['1', 'true', 'yes'] else 0
+
     off_peak = 1 if str(payload.get('is_off_peak_hour', 0)).lower() in ['1', 'true', 'yes'] else 0
 
     return [device_count, dwell_time, high_risk_asn, failed_attempts, hardware_mismatch, off_peak]
 
   def _generate_explanation(self, features: list, prediction: int) -> str:
-    """Generates white-box audit explanations for system administrators and thesis defense."""
-    device_count, dwell_time, asn, fails, mismatch, off_peak = features
+    """Reports the tree path the transaction took through the fitted model."""
+    verdict_text = "FRAUDULENT" if prediction == 1 else "LEGITIMATE"
 
-    if prediction == 0:
-      return "Transaction parameters align with normal campus student behavioral distributions."
+    labels = {
+      'device_student_count_24h': 'Distinct students on device (24h)',
+      'page_dwell_time_seconds': 'Page dwell time',
+      'is_high_risk_asn': 'ISP not in MTN/Glo/Airtel/9Mobile/Etisalat flag',
+      'failed_attempts_1h': 'Failed attempts in last hour',
+      'session_hardware_mismatch': 'Device fingerprint mismatch flag',
+      'is_off_peak_hour': 'Transaction in off-peak WAT window (1:00-4:30 AM) flag',
+    }
 
-    reasons = []
-    if device_count > 3:
-      reasons.append(f"High device-to-student velocity (>3 distinct accounts in 24h: recorded {device_count})")
-    if dwell_time < 6.0:
-      reasons.append(f"Abnormal form completion speed (<6 seconds dwell time: recorded {dwell_time}s)")
-    if asn == 1:
-      reasons.append("IP routing originates from an anonymized or datacenter ASN")
-    if fails >= 3:
-      reasons.append(f"High card-testing failure rate detected in the last hour ({fails} failures)")
-    if mismatch == 1:
-      reasons.append("Hardware fingerprint mismatch against initial login session")
-    if off_peak == 1 and (fails >= 2 or asn == 1):
-      reasons.append("High-risk execution timing during off-peak campus hours (1 AM - 4:30 AM WAT)")
+    units = {'page_dwell_time_seconds': 's'}
 
-    if not reasons:
-      reasons.append("Complex multi-variable decision boundary violation detected by Gini impurity scaling")
+    try:
+      tree = self.model.tree_
+      node = 0
+      lines = []
+      step = 1
 
-    return "BLOCKED BY AI: " + "; ".join(reasons) + "."
+      while tree.children_left[node] != tree.children_right[node]:
+        idx = tree.feature[node]
+        threshold = float(tree.threshold[node])
+        actual = features[idx]
+        col = self.feature_columns[idx]
+        unit = units.get(col, '')
+
+        if actual <= threshold:
+          branch = 'left'
+          next_node = tree.children_left[node]
+        else:
+          branch = 'right'
+          next_node = tree.children_right[node]
+
+        lines.append(
+          f"{step}. {labels[col]} = {actual}{unit} "
+          f"(threshold {threshold:.3f}{unit}, {branch})"
+        )
+
+        node = next_node
+        step += 1
+
+      if not lines:
+        return f"Model classified transaction as {verdict_text}. Tree has no split nodes."
+
+      return (
+        "Tree path (root → leaf):\n"
+        + "\n".join(lines)
+        + f"\nLeaf {node} → {verdict_text}"
+      )
+    except Exception as e:
+      return f"Model classified transaction as {verdict_text}. Could not extract tree path: {e}"
 
   def predict(self, payload: dict) -> dict:
-    """Executes live classification and returns structured forensic JSON output."""
+    """Predicts verdict and returns verdict, confidence, and explanation."""
     if not self.model:
       if not self.load_model():
         return {
           "status": "error",
-          "message": "AI model binary unavailable. Please execute train_model.py first."
+          "message": "Model not loaded."
         }
 
     try:
       features = self.extract_features(payload)
-      print(f"[DEBUG] Python ML received features: {features}")
+      print(f"[ML] Features: {features}")
 
-      # --- REPLACE np.array([features]) WITH THIS DATAFRAME WRAPPER ---
       feature_df = pd.DataFrame([features], columns=self.feature_columns)
 
-      # Execute inference using feature_df
       prediction = int(self.model.predict(feature_df)[0])
       probabilities = self.model.predict_proba(feature_df)[0]
       confidence = float(probabilities[prediction])
@@ -138,5 +157,5 @@ class FraudDetectionEngine:
     except Exception as e:
       return {
         "status": "error",
-        "message": f"Inference pipeline error: {str(e)}"
+        "message": str(e)
       }
